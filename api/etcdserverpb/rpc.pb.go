@@ -279,6 +279,13 @@ type ResponseHeader struct {
 	// For watch progress responses, the header.revision indicates progress. All future events
 	// received in this stream are guaranteed to have a higher revision number than the
 	// header.revision number.
+	/*通过 <主版本号、次版本号> 唯一确定一次更新操作
+	每个不同的写事务都有唯一一个编号，这个编号就是主版本号，
+	它是单调递增的。次版本号呢，其实是为了区分同一个事务里的多次写操作，
+	因为写事务串行化为了提高吞吐，所以尽量是批量操作，
+	把大批量的写操作聚合到一个事务中，这样次版本号就有用途啦。
+	通过 <主版本号，次版本号> 组成的 revision 就能唯一确定 etcd 中的一次更新操作哦
+	 */
 	Revision int64 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
 	// raft_term is the raft term when the request was applied.
 	RaftTerm             uint64   `protobuf:"varint,4,opt,name=raft_term,json=raftTerm,proto3" json:"raft_term,omitempty"`

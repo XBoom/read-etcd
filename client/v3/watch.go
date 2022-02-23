@@ -39,7 +39,7 @@ const (
 	closeSendErrTimeout = 250 * time.Millisecond
 )
 
-type Event mvccpb.Event
+type Event mvccpb.Event //事件類型只有PUT更新和 DELETE 刪除
 
 type WatchChan <-chan WatchResponse
 
@@ -75,9 +75,9 @@ type Watcher interface {
 	Watch(ctx context.Context, key string, opts ...OpOption) WatchChan //进行关键字key加入观察,返回一个channel隧道
 
 	// RequestProgress requests a progress notify response be sent in all watch channels.
-	RequestProgress(ctx context.Context) error
+	RequestProgress(ctx context.Context) error //告知客戶端集群當前的最新版本
 
-	// Close closes the watcher and cancels all watch requests.
+	// Close closes the watcher and cancels all watch requests. //
 	Close() error
 }
 
@@ -91,7 +91,7 @@ type WatchResponse struct {
 	// Canceled is used to indicate watch failure.
 	// If the watch failed and the stream was about to close, before the channel is closed,
 	// the channel sends a final response that has Canceled set to true with a non-nil Err().
-	Canceled bool
+	Canceled bool //watch失败，一般用于 stream 关闭
 
 	// Created is used to indicate the creation of the watcher.
 	Created bool
@@ -266,7 +266,7 @@ func (vc *valCtx) Err() error                  { return nil }
 
 func (w *watcher) newWatcherGrpcStream(inctx context.Context) *watchGrpcStream {
 	ctx, cancel := context.WithCancel(&valCtx{inctx})
-	wgs := &watchGrpcStream{
+	wgs := &watchGrpcStream{ //观察的grpc流对象
 		owner:      w,
 		remote:     w.remote,
 		callOpts:   w.callOpts,
@@ -282,6 +282,8 @@ func (w *watcher) newWatcherGrpcStream(inctx context.Context) *watchGrpcStream {
 		resumec:    make(chan struct{}),
 		lg:         w.lg,
 	}
+	//每次创建一个grpc stream 都是创建一个协程进程处理
+	//如果ctx相同，那么每次都是相同的 grpc stream
 	go wgs.run()
 	return wgs
 }
@@ -298,7 +300,7 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 		filters = append(filters, pb.WatchCreateRequest_NODELETE)
 	}
 
-	wr := &watchRequest{
+	wr := &watchRequest{ //创建一个watchRequest请求
 		ctx:            ctx,
 		createdNotify:  ow.createdNotify,
 		key:            string(ow.key),
@@ -312,10 +314,10 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 	}
 
 	ok := false
-	ctxKey := streamKeyFromCtx(ctx)
+	ctxKey := streamKeyFromCtx(ctx) //获取流的key是从ctx解析出来的
 
 	var closeCh chan WatchResponse
-	for {
+	for { //watch是循环等待服务端的响应
 		// find or allocate appropriate grpc watch stream
 		w.mu.Lock()
 		if w.streams == nil {
@@ -325,13 +327,13 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 			close(ch)
 			return ch
 		}
-		wgs := w.streams[ctxKey]
+		wgs := w.streams[ctxKey] //如果是相同的ctx，那么他们用的是同一个stream
 		if wgs == nil {
 			wgs = w.newWatcherGrpcStream(ctx)
 			w.streams[ctxKey] = wgs
 		}
-		donec := wgs.donec
-		reqc := wgs.reqc
+		donec := wgs.donec //结束隧道
+		reqc := wgs.reqc   //请求隧道
 		w.mu.Unlock()
 
 		// couldn't create channel; return closed channel
@@ -341,9 +343,9 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 
 		// submit request
 		select {
-		case reqc <- wr:
+		case reqc <- wr: //将watch请求发送到隧道对端的处理goroutine处理逻辑就可以了
 			ok = true
-		case <-wr.ctx.Done():
+		case <-wr.ctx.Done(): //如果创建的wgs结束了，那么 Watch 报告结束，流程终止
 			ok = false
 		case <-donec:
 			ok = false
@@ -494,13 +496,14 @@ func (w *watchGrpcStream) closeSubstream(ws *watcherStream) {
 }
 
 // run is the root of the goroutines for managing a watcher client
+//用于管理watch  grpc stream
 func (w *watchGrpcStream) run() {
 	var wc pb.Watch_WatchClient
 	var closeErr error
 
 	// substreams marked to close but goroutine still running; needed for
 	// avoiding double-closing recvc on grpc stream teardown
-	closing := make(map[*watcherStream]struct{})
+	closing := make(map[*watcherStream]struct{}) //这里是一个通知关闭
 
 	defer func() {
 		w.closeErr = closeErr
@@ -533,15 +536,15 @@ func (w *watchGrpcStream) run() {
 	cancelSet := make(map[int64]struct{})
 
 	var cur *pb.WatchResponse
-	for {
+	for { //循环处理grpc stream 请求
 		select {
 		// Watch() requested
-		case req := <-w.reqc:
+		case req := <-w.reqc: //请求通过watch隧道发送到 reqc 隧道
 			switch wreq := req.(type) {
 			case *watchRequest:
 				outc := make(chan WatchResponse, 1)
 				// TODO: pass custom watch ID?
-				ws := &watcherStream{
+				ws := &watcherStream{ //由于共用的是同一个Stream，所以这里其实不是真的连接中的 stream
 					initReq: *wreq,
 					id:      -1,
 					outc:    outc,
@@ -557,6 +560,7 @@ func (w *watchGrpcStream) run() {
 				w.resuming = append(w.resuming, ws)
 				if len(w.resuming) == 1 {
 					// head of resume queue, can register a new watcher
+					// wc 是 wgs 内部GRPC连接的管理者（GRPC 的client）
 					if err := wc.Send(ws.initReq.toPB()); err != nil {
 						w.lg.Debug("error when sending request", zap.Error(err))
 					}
@@ -568,7 +572,7 @@ func (w *watchGrpcStream) run() {
 			}
 
 		// new events from the watch client
-		case pbresp := <-w.respc:
+		case pbresp := <-w.respc: //这里是收到etcd发来的一个Watch Response
 			if cur == nil || pbresp.Created || pbresp.Canceled {
 				cur = pbresp
 			} else if cur != nil && cur.WatchId == pbresp.WatchId {
