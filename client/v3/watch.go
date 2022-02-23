@@ -72,7 +72,7 @@ type Watcher interface {
 	// Currently, client contexts are overwritten with "valCtx" that never closes.
 	// TODO(v3.4): configure watch retry policy, limit maximum retry number
 	// (see https://github.com/etcd-io/etcd/issues/8980)
-	Watch(ctx context.Context, key string, opts ...OpOption) WatchChan
+	Watch(ctx context.Context, key string, opts ...OpOption) WatchChan //进行关键字key加入观察
 
 	// RequestProgress requests a progress notify response be sent in all watch channels.
 	RequestProgress(ctx context.Context) error
